@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Etkileşimli Sanal Müzik Sınıfı</title>
+<style>
+body { font-family: Arial, sans-serif; margin:0; padding:20px; display:flex; flex-direction:column; min-height:100vh; }
+#heceCalisma { margin:20px auto; }
+.heceSatir { display:flex; align-items:flex-end; margin-bottom:15px; padding:10px; border:2px solid #777; border-radius:12px; flex-wrap: wrap; }
+.hece { display:inline-flex; flex-direction:column; align-items:center; margin:6px; padding:10px 14px; border:1px solid #444; border-radius:8px; cursor:pointer; font-size:20px; position:relative; }
+.correct { background:#4caf50; color:white; }
+.wrong { background:#f44336; color:white; }
+
+.btnContainer { display:flex; margin-top:6px; gap:4px; }
+
+.recBtn, .playBtn { width:24px; height:24px; border:none; border-radius:50%; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; }
+.recBtn { background:#f44336; color:white; }
+.playBtn { background:#4caf50; color:white; }
+
+#piano { position:relative; width:100%; max-width:1000px; height:200px; margin:30px auto; user-select:none; }
+.white { width:40px; height:200px; background:white; border:1px solid black; position:absolute; z-index:1; cursor:pointer; font-weight:bold; }
+.black { width:25px; height:120px; background:black; position:absolute; z-index:2; cursor:pointer; color:white; font-weight:bold; }
+.white.correct, .black.correct { background:#4caf50; color:white; }
+.white.wrong, .black.wrong { background:#f44336; color:white; }
+.white span, .black span { position:absolute; font-size:12px; pointer-events:none; text-align:center; width:100%; bottom:5px; }
+.black span { color:white; }
+
+#anahtarTemalar { margin-top:30px; padding-top:15px; border-top:2px dashed #aaa; }
+#target { font-size:22px; margin-top:10px; text-align:center; }
+</style>
+</head>
+<body>
+
+<h1>🎹 Etkileşimli Sanal Müzik Sınıfı</h1>
+
+<div id="heceCalisma">
+  <div class="heceSatir" data-audio="kuşsesleri.mp3">
+    <div class="hece" data-audio="kuş.mp3">kuş</div>
+    <div class="hece" data-audio="ses.mp3">ses</div>
+    <div class="hece" data-audio="le.mp3">le</div>
+    <div class="hece" data-audio="ri.mp3">ri</div>
+  </div>
+  <div class="heceSatir" data-audio="ovalarayayılır.mp3">
+    <div class="hece" data-audio="o.mp3">o</div>
+    <div class="hece" data-audio="va.mp3">va</div>
+    <div class="hece" data-audio="la.mp3">la</div>
+    <div class="hece" data-audio="ra.mp3">ra</div>
+    <div class="hece" data-audio="ya.mp3">ya</div>
+    <div class="hece" data-audio="yı.mp3">yı</div>
+    <div class="hece" data-audio="lır.mp3">lır</div>
+  </div>
+</div>
+
+<div id="target">Hedef Nota: --</div>
+<div id="piano"></div>
+
+<div id="anahtarTemalar">
+  <button id="startMic">Mikrofonu Aç</button>
+  <h3>Anahtar Temalar</h3>
+  <span class="hece" data-audio="sesleri.mp3">sesleri</span>
+  <span class="hece" data-audio="kuşsesleri.mp3">kuşsesleri</span>
+  <span class="hece" data-audio="ovalara.mp3">ovalara</span>
+  <span class="hece" data-audio="yayılır.mp3">yayılır</span>
+  <span class="hece" data-audio="ovalarayayılır.mp3">ovalarayayılır</span>
+</div>
+
+<script>
+let globalStream = null;
+let analyser, buffer, activeHece=null, targetNotes=[], tol=15;
+
+const NOTE_MAPPING = { "kuş":["A"], "ses":["F#"], "le":["E"], "ri":["D"], "sesleri":["F#","E","D"], "kuşsesleri":["A","F#","E","D"], "o":["A"], "va":["D"], "la":["F#"], "ra":["A"], "ovalara":["A","D","F#","A"], "ya":["G"], "yı":["F#"], "lır":["G"], "yayılır":["G","F#","G"], "ovalarayayılır":["A","D","F#","A"] };
+const TURKCE_NOTA = {C:"Do","C#":"Do#",D:"Re","D#":"Re#",E:"Mi",F:"Fa","F#":"Fa#",G:"Sol","G#":"Sol#",A:"La","A#":"La#",B:"Si"};
+
+const WHITE = ["C","D","E","F","G","A","B","C","D","E","F","G","A","B","C"];
+const BLACK_POS = [0.7,1.7,3.7,4.7,5.7,7.7,8.7,10.7,11.7,12.7,13.7];
+const BLACK = ["C#","D#","F#","G#","A#","C#","D#","F#","G#","A#","C#"];
+const piano=document.getElementById("piano"); let pianoKeys={};
+
+WHITE.forEach((n,i)=>{ let k=document.createElement("div"); k.className="white"; k.dataset.note=n; k.style.left=(i*40)+"px"; k.onclick=()=>playNote(n); let label=document.createElement("span"); label.innerText=TURKCE_NOTA[n]; k.appendChild(label); piano.appendChild(k); pianoKeys[n]=k; });
+BLACK_POS.forEach((p,i)=>{ let k=document.createElement("div"); k.className="black"; k.dataset.note=BLACK[i]; k.style.left=(p*40)+"px"; k.onclick=()=>playNote(BLACK[i]); let label=document.createElement("span"); label.innerText=TURKCE_NOTA[BLACK[i]]; k.appendChild(label); piano.appendChild(k); pianoKeys[BLACK[i]]=k; });
+
+const AudioCtx = new (window.AudioContext||window.webkitAudioContext)();
+const BASE={C:261.63,"C#":277.18,D:293.66,"D#":311.13,E:329.63,F:349.23,"F#":369.99,G:392,"G#":415.3,A:440,"A#":466.16,B:493.88};
+function playNote(n){ let o=AudioCtx.createOscillator(), g=AudioCtx.createGain(); o.frequency.value=BASE[n.replace("2","G")]; o.connect(g); g.connect(AudioCtx.destination); g.gain.value=0.3; o.start(); o.stop(AudioCtx.currentTime+0.5); }
+
+document.querySelectorAll(".hece").forEach(h=>{
+  // Hece tıklandığında sadece orijinal ses
+  h.onclick = e=>{ e.stopPropagation(); new Audio(h.dataset.audio).play(); activeHece=h; targetNotes=NOTE_MAPPING[h.innerText]||[]; h.solved=Array(targetNotes.length).fill(false); document.getElementById("target").innerText="Hedef Nota: "+targetNotes.join(" "); resetPianoKeys(); }
+
+  // Kayıt ve play tuşlarını ayrı konteynerde ekle
+  const btnContainer=document.createElement("div"); btnContainer.className="btnContainer";
+  const recBtn=document.createElement("button"); recBtn.className="recBtn"; recBtn.innerHTML="&#9679;";
+  const playBtn=document.createElement("button"); playBtn.className="playBtn"; playBtn.innerHTML="&#9658;";
+  btnContainer.appendChild(recBtn); btnContainer.appendChild(playBtn);
+  h.parentNode.insertBefore(btnContainer,h.nextSibling);
+
+  let chunks=[], recorder;
+
+  recBtn.addEventListener("mousedown", async ()=>{
+    if(!globalStream) globalStream=await navigator.mediaDevices.getUserMedia({audio:true});
+    recorder=new MediaRecorder(globalStream); chunks=[];
+    recorder.ondataavailable=e=>chunks.push(e.data); recorder.start();
+    recBtn.style.opacity=0.5;
+    recorder.onstop=()=>{ h.audioBlob=new Blob(chunks,{type:'audio/webm'}); h.audioURL=URL.createObjectURL(h.audioBlob); recBtn.style.opacity=1; };
+  });
+
+  recBtn.addEventListener("mouseup", ()=>{ if(recorder) recorder.stop(); });
+  recBtn.addEventListener("mouseleave", ()=>{ if(recorder && recorder.state==="recording") recorder.stop(); });
+
+  playBtn.addEventListener("click", ()=>{ if(h.audioURL) new Audio(h.audioURL).play(); });
+});
+
+function resetPianoKeys(){ Object.values(pianoKeys).forEach(k=>{ k.classList.remove("correct","wrong"); }); if(activeHece) activeHece.classList.remove("correct","wrong"); }
+
+document.getElementById("startMic").onclick=async()=>{
+  if(!globalStream) globalStream=await navigator.mediaDevices.getUserMedia({audio:true});
+  if(!analyser){ const ctx=new AudioContext(); analyser=ctx.createAnalyser(); ctx.createMediaStreamSource(globalStream).connect(analyser); analyser.fftSize=2048; buffer=new Float32Array(analyser.fftSize); requestAnimationFrame(updatePitch); }
+};
+
+function autoCorr(buf,sr){ let rms=0; for(let i=0;i<buf.length;i++) rms+=buf[i]*buf[i]; rms=Math.sqrt(rms/buf.length); if(rms<0.01) return -1; let best=-1,bc=0; for(let o=20;o<1000;o++){ let c=0; for(let i=0;i<buf.length-o;i++) c+=buf[i]*buf[i+o]; if(c>bc){bc=c; best=o;} } return sr/best; }
+
+function checkPitch(freq, notes, solved){ let matched=false; for(let i=0;i<notes.length;i++){ if(solved[i]) continue; for(let octave=0;octave<=8;octave++){ let f=BASE[notes[i]]*Math.pow(2,octave-4); let cent=1200*Math.log2(freq/f); if(Math.abs(cent)<=tol){ solved[i]=true; pianoKeys[notes[i]]?.classList.add("correct"); pianoKeys[notes[i]]?.classList.remove("wrong"); matched=true; } } if(!solved[i]){ pianoKeys[notes[i]]?.classList.add("wrong"); pianoKeys[notes[i]]?.classList.remove("correct"); } } return matched; }
+
+function updatePitch(){ analyser.getFloatTimeDomainData(buffer); let f=autoCorr(buffer,analyser.context.sampleRate); if(f>0 && targetNotes.length && activeHece){ const correct=checkPitch(f,targetNotes,activeHece.solved); if(activeHece.solved.every(x=>x)){ activeHece.classList.add("correct"); activeHece.classList.remove("wrong"); } else if(!correct){ activeHece.classList.add("wrong"); activeHece.classList.remove("correct"); } else{ activeHece.classList.remove("wrong"); activeHece.classList.remove("correct"); } } requestAnimationFrame(updatePitch); }
+</script>
+</body>
+</html>
